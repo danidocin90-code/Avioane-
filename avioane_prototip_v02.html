@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Avioane 0.2</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f3efe5;color:#24211d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:760px;margin:auto;padding:14px}
+h1{text-align:center;margin:3px 0;font-size:30px}
+.sub{text-align:center;color:#70695d;margin-bottom:12px}
+.panel{background:#fffdf8;border:1px solid #d5cdbc;border-radius:18px;padding:14px;box-shadow:0 5px 20px #00000012}
+.buttons{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:10px}
+button{font-size:15px;font-weight:800;border:1px solid #aaa18f;background:#fff;border-radius:11px;padding:10px 15px}
+.status{text-align:center;font-weight:800;min-height:44px;display:flex;align-items:center;justify-content:center}
+.boards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.title{text-align:center;font-weight:800;margin:4px 0 7px}
+.grid{display:grid;grid-template-columns:23px repeat(10,1fr);grid-template-rows:23px repeat(10,1fr);aspect-ratio:1}
+.coord{display:flex;align-items:center;justify-content:center;font-size:11px;color:#777}
+.cell{border:1px solid #c8c0b0;background:#faf7ef;display:flex;align-items:center;justify-content:center;font-weight:800;cursor:pointer;user-select:none}
+.enemy .cell:hover{background:#eee7d9}
+.cell.plane{background:#c9bea5}
+.cell.miss{background:#dce5e7}
+.cell.hit{background:#e7a078}
+.cell.cap{background:#9fbd95!important}
+.cell.destroyed{background:#b86d5f!important;color:white}
+.info{text-align:center;color:#746d61;font-size:12px;margin-top:12px}
+@media(max-width:600px){.boards{grid-template-columns:1fr}.wrap{padding:9px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>✈️ AVIOANE</h1>
+<div class="sub">Versiunea 0.2 — tu contra calculatorului</div>
+<div class="panel">
+<div class="buttons">
+<button id="newBtn">🔄 Joc nou</button>
+<button id="showBtn">👁 Arată avioanele</button>
+</div>
+<div id="status" class="status">Pregătesc partida...</div>
+
+<div class="boards">
+<section>
+<div class="title">TABLA TA</div>
+<div id="myBoard" class="grid"></div>
+</section>
+<section>
+<div class="title">TABLA CALCULATORULUI</div>
+<div id="enemyBoard" class="grid enemy"></div>
+</section>
+</div>
+
+<div class="info">Alege o căsuță pe tabla calculatorului. Pozițiile avioanelor sunt stabilite la începutul partidei și nu se schimbă.</div>
+</div>
+</div>
+
+<script>
+const N=10;
+
+/* Fiecare avion are 9 celule.
+   [0,0] este CAPUL. Restul sunt corp/aripi/coadă.
+   Sunt permise 4 orientări. */
+const SHAPES=[
+ [[0,0],[1,0],[2,0],[3,0],[4,0],[2,-1],[2,1],[4,-1],[4,1]],
+ [[0,0],[0,1],[0,2],[0,3],[0,4],[-1,2],[1,2],[-1,4],[1,4]],
+ [[0,0],[-1,0],[-2,0],[-3,0],[-4,0],[-2,-1],[-2,1],[-4,-1],[-4,1]],
+ [[0,0],[0,-1],[0,-2],[0,-3],[0,-4],[-1,-2],[1,-2],[-1,-4],[1,-4]]
+];
+
+let playerFleet=[];
+let computerFleet=[];
+let playerShots=new Set();
+let computerShots=new Set();
+let destroyedPlayer=new Set();
+let destroyedComputer=new Set();
+let gameOver=false;
+let showPlanes=false;
+
+const key=(r,c)=>r+","+c;
+
+function placeRandomFleet(){
+  const fleet=[];
+  const planes=[];
+  for(let p=0;p<3;p++){
+    let placed=false;
+    for(let attempt=0;attempt<1000 && !placed;attempt++){
+      const r=Math.floor(Math.random()*N);
+      const c=Math.floor(Math.random()*N);
+      const d=Math.floor(Math.random()*4);
+      const cells=SHAPES[d].map(([dr,dc])=>[r+dr,c+dc]);
+      if(cells.some(([a,b])=>a<0||a>=N||b<0||b>=N)) continue;
+      const occupied=new Set(fleet.map(([a,b])=>key(a,b)));
+      if(cells.some(([a,b])=>occupied.has(key(a,b)))) continue;
+      planes.push({head:[r,c],cells});
+      fleet.push(...cells);
+      placed=true;
+    }
+  }
+  return {fleet,planes};
+}
+
+function coord(text){
+  const e=document.createElement("div");
+  e.className="coord";
+  e.textContent=text;
+  return e;
+}
+
+function buildBoard(id, data, shots, interactive, reveal){
+  const el=document.getElementById(id);
+  el.innerHTML="";
+  el.appendChild(coord(""));
+  for(let c=0;c<N;c++) el.appendChild(coord(String.fromCharCode(65+c)));
+
+  for(let r=0;r<N;r++){
+    el.appendChild(coord(String(r+1)));
+    for(let c=0;c<N;c++){
+      const cell=document.createElement("div");
+      cell.className="cell";
+      const k=key(r,c);
+      const planeIndex=data.fleet.findIndex(([a,b])=>a===r&&b===c);
+      const hasPlane=planeIndex>=0;
+
+      if(reveal && hasPlane) cell.classList.add("plane");
+
+      if(shots.has(k)){
+        if(hasPlane){
+          cell.classList.add("hit");
+          const pi=data.planes.findIndex(p=>p.cells.some(([a,b])=>a===r&&b===c));
+          const isHead=data.planes[pi].head[0]===r && data.planes[pi].head[1]===c;
+          if(isHead) cell.classList.add("cap");
+          if(destroyedFor(data,shots).has(pi)) cell.classList.add("destroyed");
+        }else{
+          cell.classList.add("miss");
+        }
+      }
+
+      if(interactive && !shots.has(k) && !gameOver){
+        cell.onclick=()=>shoot(r,c);
+      }
+      el.appendChild(cell);
+    }
+  }
+}
+
+function destroyedFor(data,shots){
+  const out=new Set();
+  data.planes.forEach((p,i)=>{
+    if(shots.has(key(p.head[0],p.head[1]))) out.add(i);
+  });
+  return out;
+}
+
+function allDestroyed(data,shots){
+  return destroyedFor(data,shots).size===3;
+}
+
+function setStatus(text){document.getElementById("status").textContent=text}
+
+function draw(){
+  const pd={fleet:playerFleet.fleet,planes:playerFleet.planes};
+  const cd={fleet:computerFleet.fleet,planes:computerFleet.planes};
+  buildBoard("myBoard",pd,computerShots,false,showPlanes);
+  buildBoard("enemyBoard",cd,playerShots,true,false);
+}
+
+function newGame(){
+  playerFleet=placeRandomFleet();
+  computerFleet=placeRandomFleet();
+  playerShots=new Set();
+  computerShots=new Set();
+  destroyedPlayer=new Set();
+  destroyedComputer=new Set();
+  gameOver=false;
+  showPlanes=false;
+  document.getElementById("showBtn").textContent="👁 Arată avioanele";
+  setStatus("🟢 Partidă nouă! Este rândul tău. Alege o căsuță.");
+  draw();
+}
+
+function shoot(r,c){
+  if(gameOver)return;
+  const k=key(r,c);
+  if(playerShots.has(k))return;
+
+  playerShots.add(k);
+  const planeIndex=computerFleet.planes.findIndex(p=>p.cells.some(([a,b])=>a===r&&b===c));
+  const hit=planeIndex>=0;
+  const isHead=hit &&
+    computerFleet.planes[planeIndex].head[0]===r &&
+    computerFleet.planes[planeIndex].head[1]===c;
+
+  if(isHead){
+    destroyedComputer.add(planeIndex);
+    if(allDestroyed(computerFleet,playerShots)){
+      gameOver=true;
+      setStatus("🏆 AI CÂȘTIGAT! Ai distrus toate cele 3 avioane!");
+      draw();
+      return;
+    }
+    setStatus("☠️ CAP! Ai distrus un avion. Calculatorul trage...");
+  }else if(hit){
+    setStatus("💥 LOVIT! Calculatorul trage...");
+  }else{
+    setStatus("❌ RATAT! Calculatorul trage...");
+  }
+
+  draw();
+  setTimeout(computerTurn,550);
+}
+
+function computerTurn(){
+  if(gameOver)return;
+
+  const choices=[];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    if(!computerShots.has(key(r,c))) choices.push([r,c]);
+  }
+  const [r,c]=choices[Math.floor(Math.random()*choices.length)];
+  computerShots.add(key(r,c));
+
+  const planeIndex=playerFleet.planes.findIndex(p=>p.cells.some(([a,b])=>a===r&&b===c));
+  const hit=planeIndex>=0;
+  const isHead=hit &&
+    playerFleet.planes[planeIndex].head[0]===r &&
+    playerFleet.planes[planeIndex].head[1]===c;
+
+  if(isHead){
+    destroyedPlayer.add(planeIndex);
+    if(allDestroyed(playerFleet,computerShots)){
+      gameOver=true;
+      setStatus("☠️ Calculatorul ți-a distrus toate cele 3 avioane. Ai pierdut.");
+    }else{
+      setStatus("☠️ Calculatorul ți-a găsit CAPUL unui avion!");
+    }
+  }else if(hit){
+    setStatus("💥 Calculatorul te-a lovit! Acum e rândul tău.");
+  }else{
+    setStatus("❌ Calculatorul a ratat. Acum e rândul tău.");
+  }
+  draw();
+}
+
+document.getElementById("newBtn").onclick=newGame;
+document.getElementById("showBtn").onclick=()=>{
+  showPlanes=!showPlanes;
+  document.getElementById("showBtn").textContent=showPlanes?"🙈 Ascunde avioanele":"👁 Arată avioanele";
+  draw();
+};
+
+newGame();
+</script>
+</body>
+</html>
